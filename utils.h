@@ -1,6 +1,8 @@
 #ifndef FILECOPY_UTILS_H
 #define FILECOPY_UTILS_H
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <sys/stat.h>
