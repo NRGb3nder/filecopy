@@ -23,8 +23,8 @@ int copy_part(const char *source, const char *dest, int dest_fd, size_t bufsize,
 int write_s(const char *dest, int dest_fd, const char *outbuf, size_t outsize, off_t part_offset, int sem_id);
 
 char *module;
-struct sembuf op_lock = {.sem_op = 1};
-struct sembuf op_unlock = {.sem_op = -1};
+struct sembuf op_lock = {.sem_op = -1};
+struct sembuf op_unlock = {.sem_op = 1};
 
 int main(int argc, char *argv[]) {
     module = basename(argv[0]);
@@ -78,7 +78,7 @@ int fcopy(const char *source, const char *dest, long process_count)
         return 1;
     }
 
-    if (ensure_semop(sem_id, &op_lock) == -1) {
+    if (ensure_semop(sem_id, &op_unlock) == -1) {
         printerr(module, strerror(errno), "semop");
         return 1;
     }
@@ -99,7 +99,7 @@ int fcopy(const char *source, const char *dest, long process_count)
     off_t part_offset = 0;
 
     pid_t child;
-    for (int i = 0; i < process_count; i++) {
+    for (int i = 1; i <= process_count; i++) {
         if (child = fork(), child == -1) {
             printerr(module, strerror(errno), "fork");
             return 1;
@@ -107,7 +107,7 @@ int fcopy(const char *source, const char *dest, long process_count)
 
         if (!child) {
             return copy_part(source, dest, dest_fd, (size_t) statbuf.st_blksize,
-                sem_id, part_offset, i != process_count ? part_size : (size_t) statbuf.st_size - part_offset);
+                sem_id, part_offset, i != process_count ? part_size : (size_t) (statbuf.st_size - part_offset));
         } else {
             part_offset += part_size;
         }
@@ -138,7 +138,7 @@ int ensure_semop(int sem_id, struct sembuf *op)
 int copy_part(const char *source, const char *dest, int dest_fd, size_t bufsize,
     int sem_id, off_t part_offset, size_t part_size)
 {
-    size_t part_end = part_offset + part_size;
+    off_t part_end = part_offset + part_size;
     char buf[bufsize];
 
     int source_fd;
@@ -157,16 +157,18 @@ int copy_part(const char *source, const char *dest, int dest_fd, size_t bufsize,
     if (!is_seekerror) {
         while (!is_rdwrerror && part_offset < part_end) {
             ssize_t bytes_count;
-            if (bytes_count = read(source_fd, buf, bufsize), bytes_count == -1) {
+            bool is_last_chunk = part_end - part_offset <= bufsize;
+            if (bytes_count = read(source_fd, buf, is_last_chunk ? (size_t) (part_end - part_offset) : bufsize), bytes_count == -1) {
                 printerr(module, strerror(errno), source);
                 is_rdwrerror = true;
             }
-
-            if (write_s(dest, dest_fd, buf, (size_t) bytes_count, part_offset, sem_id) == -1) {
-                printerr(module, strerror(errno), dest);
-                is_rdwrerror = true;
+            if (!is_rdwrerror) {
+                if (write_s(dest, dest_fd, buf, (size_t) bytes_count, part_offset, sem_id) == -1) {
+                    printerr(module, strerror(errno), dest);
+                    is_rdwrerror = true;
+                }
+                part_offset += bytes_count;
             }
-            part_offset += bytes_count;
         }
     }
 
